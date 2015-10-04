@@ -5,8 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-
-#define USAGE_MSG "TM Emulator (5 syntax)\nUsage:\n  -p   Programm file\n  -i   Input string\n  -io  Input offset\n"
+#include <assert.h>
+#include <string.h>
+#define USAGE_MSG "TM Emulator (5 syntax)\nUsage:\n  -p   Programm file\n  -i   Input string\n  -io  Input offset\n  -d   Debug info.\n"
 
 typedef uint32_t cmd_t;
 #define CMD_ACT_U 0
@@ -14,14 +15,16 @@ typedef uint32_t cmd_t;
 #define CMD_ACT_L 0x00020000
 #define CMD_ACT_S 0x00030000
 
+int debug = 0;
+
 static inline uint8_t cmd_qF(cmd_t a)
 {
-	return (a&0xFE000000) >> 27;
+	return (a&0xFE000000) >> 25;
 }
 
 static inline uint8_t cmd_qT(cmd_t a)
 {
-	return (a&0x01FC0000) >> 22;
+	return (a&0x01FC0000) >> 18;
 }
 
 static inline uint32_t cmd_act(cmd_t a)
@@ -34,7 +37,7 @@ static inline uint8_t cmd_cF(cmd_t a)
 	return (a&0x0000FF00)>>8;
 }
 
-static inline int8_t cmd_cT(cmd_t a)
+static inline uint8_t cmd_cT(cmd_t a)
 {
 	return a&0x000000FF;
 }
@@ -42,7 +45,7 @@ static inline int8_t cmd_cT(cmd_t a)
 static inline cmd_t cmd_build(int qF, uint8_t cF, char act, int qT, uint8_t cT)
 {
 	register cmd_t cmd=0;
-	cmd |= (qF & 0x0000007F)<<27;
+	cmd |= (qF & 0x0000007F)<<25;
 	cmd |= cF << 8;
 	if(act=='s'||act=='S')
 		cmd |= CMD_ACT_S;
@@ -51,7 +54,7 @@ static inline cmd_t cmd_build(int qF, uint8_t cF, char act, int qT, uint8_t cT)
 	else if(act=='l'||act=='L')
 		cmd |= CMD_ACT_L;
 	else	cmd |= CMD_ACT_U;
-	cmd |= (qT & 0x0000007F)<<22;
+	cmd |= (qT & 0x0000007F)<<18;
 	cmd |= cT;
 	return cmd;
 }
@@ -131,8 +134,8 @@ void data_write(uint8_t v)
 	}
 
 	(*bank)[pos] = v;
-	if(pos>*used)
-		*used=pos;
+	if(pos>=*used)
+		*used=pos+1;
 }
 
 void print_line(void)
@@ -151,19 +154,31 @@ void print_line(void)
 	printf("\n");
 }
 
-void feed_program(FILE *in)
+void feed_program(FILE *fin)
 {
 	int qF, qT;	
 	char act, cF, cT;
+	char in[32];
+	cmd_t cmd; 
 	if(prog) free(prog);
 	if(p_cache) free(p_cache);
 	prog = calloc(256,sizeof(cmd_t));
 	p_cache = calloc(128,sizeof(void*));
 	prog_len = 0; prog_size = 256;
 	/*(1) read em*/
-	while(/*!feof(in) &&*/ fscanf(in,"%i,%c,%c,%c,%i",&qF,&cF,&cT,&act,&qT)==5)
+	while(!feof(fin) /*&& fscanf(fin,"%i,%c,%c,%c,%i",&qF,&cF,&cT,&act,&qT)==5*/)
 	{
-		cmd_t cmd = cmd_build(qF,cF,act,qT,cT);
+		fgets(in,32,fin);
+		if(!strchr(in,',')) break;
+		qF = ((in[0]-'0')*10) + (in[1]-'0');
+		cF = in[3];
+		cT = in[5];
+		act= in[7];
+		qT = ((in[9]-'0')*10) + (in[10]-'0');
+		cmd= cmd_build(qF,cF,act,qT,cT);
+		if(debug)
+			printf("%s --> %2i %c %c %c %2i | %08X | %2i %c %c %c %2i\n",in, qF, cF, cT, act, qT, cmd,
+					cmd_qF(cmd), cmd_cF(cmd), cmd_cT(cmd), "urls"[cmd_act(cmd)>>16], cmd_qT(cmd) );
 		if(prog_len >= prog_size)
 			prog_size+=256, prog = realloc(prog,prog_size*sizeof(cmd_t));
 		prog[prog_len++]=cmd;
@@ -204,6 +219,8 @@ void run(void)
 		{
 			q=cmd_qT(*cptr);
 			data_write(cmd_cT(*cptr));
+			if(debug)
+				printf("Q%02i -> Q%02i; %c -> %c\n", cmd_qF(*cptr),cmd_qT(*cptr), cmd_cF(*cptr), cmd_cT(*cptr));
 			if(cmd_act(*cptr)==CMD_ACT_S)
 				break;
 			else if(cmd_act(*cptr)==CMD_ACT_L)
@@ -218,7 +235,7 @@ void run(void)
 		}
 	}
 	if(st==1)
-		printf("ERROR: No command. Q = %i, C = `%c`\n", q, c);
+		printf("ERROR: No command. Q = %i, C = `%c`, pos = %i\n", q, c, data.pos);
 	else
 		printf("Done.\n");
 	printf("Count of iterations:%i\n", it);
@@ -230,6 +247,7 @@ int main(int argc, char **argv)
 	int in_offset=0;
 	char *in_fill=NULL;
 	FILE *pfile;
+	char ltrs[] = "urls";
 	pfile = stdin;
 	for(i=1;i<argc;i++)
 	{
@@ -241,6 +259,8 @@ int main(int argc, char **argv)
 				sscanf(argv[++i], "%i", &in_offset);
 			else if(argv[i][1]=='i' && argv[i][2]==0)
 				in_fill=argv[++i];
+			else if(argv[i][1]=='d')
+				debug = 1;
 			else if(argv[i][1]=='h')
 			{
 				printf(USAGE_MSG);
@@ -266,5 +286,13 @@ int main(int argc, char **argv)
 	feed_program(pfile);
 	run();
 	print_line();
+	if(debug)
+		for(i=0;i<prog_len;i++)
+			printf("%2u,%c,%c,%c,%2u\n",	cmd_qF(prog[i]),
+							cmd_cF(prog[i]),
+							cmd_cT(prog[i]),
+							ltrs[cmd_act(prog[i])>>16],
+							cmd_qT(prog[i])
+							);
 	return 0;
 }
