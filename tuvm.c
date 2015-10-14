@@ -7,7 +7,7 @@
 #include <stdint.h>
 #include <assert.h>
 #include <string.h>
-#define USAGE_MSG "TM Emulator (5 syntax)\nUsage:\n  -p   Programm file\n  -i   Input string\n  -io  Input offset\n  -d   Debug info.\n"
+#define USAGE_MSG "TM Emulator (5 syntax)\nUsage:\n  -p   Programm file\n  -i   Input string\n  -io  Input offset\n  -d   Debug info.\n  -sX  Set syntax, x = 4 or 5\n"
 
 typedef uint32_t cmd_t;
 #define CMD_ACT_U 0
@@ -196,6 +196,56 @@ void feed_program(FILE *fin)
 	}
 }
 
+void feed_program4(FILE *fin)
+{
+	int qF, qT;	
+	char act, cF, cT;
+	char in[32];
+	cmd_t cmd; 
+	if(prog) free(prog);
+	if(p_cache) free(p_cache);
+	prog = calloc(256,sizeof(cmd_t));
+	p_cache = calloc(128,sizeof(void*));
+	prog_len = 0; prog_size = 256;
+	/*(1) read em*/
+	while(!feof(fin) /*&& fscanf(fin,"%i,%c,%c,%c,%i",&qF,&cF,&cT,&act,&qT)==5*/)
+	{
+		fgets(in,32,fin);
+		if(!strchr(in,',')) break;
+		qF = ((in[0]-'0')*10) + (in[1]-'0');
+		cF = in[3];
+		cT = in[5];
+		if(cT == 's' || cT == 'S')
+			act = 's', cT = cF;
+		else if(cT == 'l' || cT == 'L')
+			act = 'l', cT = cF;
+		else if(cT == 'r' || cT == 'R')
+			act = 'r', cT = cF;
+		else if(cT == 'u' || cT == 'U')
+			act = 'u', cT = cF;
+		else act = 'u';
+		qT = ((in[7]-'0')*10) + (in[8]-'0');
+		cmd= cmd_build(qF,cF,act,qT,cT);
+		if(debug)
+			printf("%s --> %2i %c %c %c %2i  | %08X | %2i %c %c %c %2i\n",in, qF, cF, cT, act, qT, cmd,
+					cmd_qF(cmd), cmd_cF(cmd), cmd_cT(cmd), "urls"[cmd_act(cmd)>>16], cmd_qT(cmd) );
+		if(prog_len >= prog_size)
+			prog_size+=256, prog = realloc(prog,prog_size*sizeof(cmd_t));
+		prog[prog_len++]=cmd;
+	}
+	/*(2) sort em*/
+	qsort(prog,prog_len,sizeof(cmd_t), cmd_cmp);
+	/*(3) make cache*/
+	{
+		int i;
+		qF=300;
+		for(i=0;i<prog_len;i++)
+			if(cmd_qF(prog[i])!=qF)
+				qF = cmd_qF(prog[i]),
+				p_cache[qF] = &prog[i];   
+	}
+}
+
 void run(void)
 {
 	uint8_t c;
@@ -248,6 +298,7 @@ int main(int argc, char **argv)
 	char *in_fill=NULL;
 	FILE *pfile;
 	char ltrs[] = "urls";
+	int synt = 5;
 	pfile = stdin;
 	for(i=1;i<argc;i++)
 	{
@@ -261,6 +312,16 @@ int main(int argc, char **argv)
 				in_fill=argv[++i];
 			else if(argv[i][1]=='d')
 				debug = 1;
+			else if(argv[i][1]=='s')
+			{
+				if(argv[i][2]=='4' || argv[i][2]=='5')
+					synt = argv[i][2]-'0';
+				else
+				{
+					printf("Wrong syntax type!\n");
+					return 0;
+				};
+			}
 			else if(argv[i][1]=='h')
 			{
 				printf(USAGE_MSG);
@@ -283,7 +344,9 @@ int main(int argc, char **argv)
 		printf("Cant open program file.\n");
 		return 0;
 	}
-	feed_program(pfile);
+	if(synt==5)
+		feed_program(pfile);
+	else	feed_program4(pfile);
 	run();
 	print_line();
 	if(debug)
