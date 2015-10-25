@@ -7,7 +7,8 @@
 typedef struct
 {
 	char from[16];
-	char to[16];
+	char to[15];
+	char act;
 } rule_t;
 
 rule_t rules[64];
@@ -17,14 +18,18 @@ char *buffer;
 
 void feed_rules(FILE *fp)
 {
-	char s1[16], s2[16];
+	char s1[16], s2[16], a;
 	int i=0;
-	while(fscanf(fp,"%16s -> %16s", s1, s2)==2)
+	while(fscanf(fp,"%16s %c> %16s", s1, &a, s2)>1 && s1[0])
 	{
 		if(i<MAX_RULES)
 		{
+			char *t;
+			if(t = strstr(s2,"λ"))
+				*t = 0;
 			strcpy(rules[i].from, s1);
-			strcpy(rules[i++].to, s2);
+			strcpy(rules[i].to, s2);
+			rules[i++].act = a;
 		}
 		else
 		{
@@ -48,10 +53,14 @@ void run(void)
 			{
 
 				*tmp = 0;
-				tmp2 = &tmp[strlen(rules[i].from)];
+				tmp2 = strdup(&tmp[strlen(rules[i].from)]);
 			       	tmp = strdup(buffer);
-				snprintf(buffer, 80, "%s%s%s", tmp, rules[i].to, tmp2);
-				printf(" --> %s\n", buffer);
+				printf(" --> %s\033[32m%s\033[0m%s\n", tmp, rules[i].to, tmp2);
+				snprintf(buffer, 80, "%s%s%s%c", tmp, rules[i].to, tmp2,0);
+				free(tmp);
+				free(tmp2);
+				if(rules[i].act == '=')
+					return;
 				goto _c;
 			}
 		}
